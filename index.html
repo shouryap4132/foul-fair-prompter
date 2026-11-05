@@ -351,10 +351,9 @@ function setPlaying(on) {
   last = 0;
   if (on) { holdScreen(); requestAnimationFrame(frame); } else { letScreenGo(); }
 }
-function frame(now) {
-  if (!playing) return;
+function step(now) {
   if (last) {
-    const raw = (now - last) / 1000;
+    const raw = Math.max(0, (now - last) / 1000);
     const dt = room ? raw : Math.min(raw, 0.1);
     let rate = t < 0 ? 1 : speed;
     if (ref) {
@@ -368,8 +367,17 @@ function frame(now) {
     paint();
   }
   last = now;
-  requestAnimationFrame(frame);
 }
+function frame(now) {
+  if (!playing) return;
+  step(now);
+  if (playing) requestAnimationFrame(frame);
+}
+// Browsers can stop drawing a page that isn't on screen. Keep synced timing running anyway.
+setInterval(() => {
+  const now = performance.now();
+  if (playing && room && now - last > 200) step(now);
+}, 250);
 function jump(time) { t = time; paint(); }
 
 // Manual scrolling moves the clock with it
