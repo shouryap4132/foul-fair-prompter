@@ -470,6 +470,7 @@ function publish(name, data, retain) {
   clients.forEach(c => { if (c.connected) c.publish(topic(name), msg, { qos: 0, retain }); });
 }
 function snapshot() {
+  if (playing) step(performance.now());
   seenRev += 1;
   seenId = deviceId;
   return { id: deviceId, rev: seenRev, speed: Math.round(speed * 100), playing, t, at: Date.now() };
