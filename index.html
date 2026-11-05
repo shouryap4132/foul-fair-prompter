@@ -102,7 +102,10 @@ button:hover, select:hover { border-color: var(--muted); }
 .seg button:last-child { border-radius: 0 4px 4px 0; }
 .seg button[aria-pressed="true"] { background: var(--line); border-color: var(--muted); position: relative; }
 #speed { width: 110px; accent-color: var(--shourya); }
-#speedOut { min-width: 3.2em; font-variant-numeric: tabular-nums; }
+#speedOut {
+  width: 4.2em; min-height: 40px; padding-inline: 8px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--bg); color: var(--fg); font: 400 15px var(--font-ui); font-variant-numeric: tabular-nums;
+}
 #sync.on { border-color: var(--ok); color: var(--ok); }
 #syncPanel {
   position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); bottom: 12px; z-index: 2;
@@ -171,8 +174,8 @@ button:hover, select:hover { border-color: var(--muted); }
   </div>
   <div class="group">
     <label class="label" for="speed">Speed</label>
-    <input id="speed" type="range" min="50" max="150" step="5" value="100">
-    <output id="speedOut" for="speed">100%</output>
+    <input id="speed" type="range" min="50" max="150" step="1" value="100">
+    <input id="speedOut" type="number" inputmode="numeric" min="10" max="300" step="1" value="100" aria-label="Speed in percent"><span class="label">%</span>
   </div>
   <div class="group">
     <span class="label only-wide">Text</span>
@@ -351,10 +354,11 @@ stage.addEventListener('scroll', () => {
 
 // Controls
 let speed = 1;
+const clampSpeed = pct => Math.max(10, Math.min(300, pct));
 function setSpeed(pct) {
   speed = pct / 100;
   $('speed').value = pct;
-  $('speedOut').textContent = pct + '%';
+  if (document.activeElement !== $('speedOut')) $('speedOut').value = pct;
   store.set('speed', pct);
 }
 function setSize(px) {
@@ -380,6 +384,15 @@ function toggle() {
 $('play').addEventListener('click', () => { toggle(); share(); });
 $('restart').addEventListener('click', () => { jump(-LEAD_IN); if (!playing) setPlaying(true); share(); });
 $('speed').addEventListener('input', e => { setSpeed(Number(e.target.value)); share(); });
+$('speedOut').addEventListener('change', e => {
+  const typed = Math.round(Number(e.target.value));
+  if (e.target.value !== '' && typed > 0) {
+    setSpeed(clampSpeed(typed));
+    share();
+  }
+  e.target.value = Math.round(speed * 100);
+});
+$('speedOut').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
 $('smaller').addEventListener('click', () => setSize(currentSize() - 2));
 $('larger').addEventListener('click', () => setSize(currentSize() + 2));
 $('focus').addEventListener('click', e => { const b = e.target.closest('button'); if (b) setFocus(b.dataset.focus); });
@@ -393,8 +406,8 @@ body.addEventListener('click', e => {
 document.addEventListener('keydown', e => {
   if (e.target.matches('input, select, button')) return;
   if (e.key === ' ') { e.preventDefault(); toggle(); share(); }
-  if (e.key === 'ArrowUp') { e.preventDefault(); setSpeed(Math.min(150, Math.round(speed * 100) + 5)); share(); }
-  if (e.key === 'ArrowDown') { e.preventDefault(); setSpeed(Math.max(50, Math.round(speed * 100) - 5)); share(); }
+  if (e.key === 'ArrowUp') { e.preventDefault(); setSpeed(clampSpeed(Math.round(speed * 100) + 5)); share(); }
+  if (e.key === 'ArrowDown') { e.preventDefault(); setSpeed(clampSpeed(Math.round(speed * 100) - 5)); share(); }
 });
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') { wake = null; holdScreen(); }
@@ -431,7 +444,7 @@ function receive(m, retained) {
   seenId = m.id;
   const heartbeat = m.hb === true;
   if (!heartbeat) leader = false;
-  setSpeed(Math.max(50, Math.min(150, Math.round(m.speed))));
+  setSpeed(clampSpeed(Math.round(m.speed)));
   const age = Math.max(0, (Date.now() - m.at) / 1000);
   const abandoned = retained && age > STALE_AFTER;
   const on = m.playing === true && !abandoned;
