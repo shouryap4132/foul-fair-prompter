@@ -27,7 +27,8 @@
   --font-body: "Literata", Georgia, "Times New Roman", serif;
   --font-ui: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
   --size: 32px;
-  --read: 30%;
+  --read: 50%;
+  --band: rgba(255, 255, 255, .055);
 }
 html, body { height: 100%; }
 body {
@@ -72,13 +73,14 @@ body {
 .shade.top { top: 0; height: 12%; background: linear-gradient(var(--bg), transparent); }
 .shade.bottom { bottom: 0; height: 8%; background: linear-gradient(transparent, var(--bg)); }
 #mark {
-  position: absolute; inset-inline: 0; top: var(--read); height: 0; pointer-events: none;
-  border-top: 1px solid var(--line); color: var(--muted);
+  position: absolute; inset-inline: 0; top: var(--read); height: calc(var(--size) * 1.42);
+  transform: translateY(-50%); pointer-events: none; background: var(--band); color: var(--muted);
 }
-#mark::before {
-  content: ""; position: absolute; left: 0; top: -7px;
-  border-block: 7px solid transparent; border-left: 11px solid currentColor;
+#mark::before, #mark::after {
+  content: ""; position: absolute; top: 50%; margin-top: -7px; border-block: 7px solid transparent;
 }
+#mark::before { left: 0; border-left: 11px solid currentColor; }
+#mark::after { right: 0; border-right: 11px solid currentColor; }
 
 .bar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
@@ -250,10 +252,24 @@ SECTIONS.forEach((sec, i) => {
     }
     row.append(who, text);
     body.append(row);
-    lines.push({ el: row, who: l.who, top: 0 });
+    lines.push({ el: row, textEl: text, who: l.who, len: l.text.length, t: 0 });
   });
 });
 $('total').textContent = fmt(TOTAL);
+
+// Every line gets a fixed time from its words, so the clock means the same text on every screen.
+const HEAD_TIME = 4, TURN_WEIGHT = 50;
+{
+  let first = 0;
+  SECTIONS.forEach(sec => {
+    const group = lines.slice(first, first + sec.lines.length);
+    const total = group.reduce((sum, l) => sum + l.len + TURN_WEIGHT, 0);
+    const budget = sec.end - sec.start - HEAD_TIME;
+    let at = sec.start + HEAD_TIME;
+    group.forEach(l => { l.t = at; at += budget * (l.len + TURN_WEIGHT) / total; });
+    first += sec.lines.length;
+  });
+}
 
 // Time drives position: each section fills its scripted minutes.
 let anchors = [], readY = 0, expected = 0;
@@ -264,13 +280,22 @@ function topOf(el) {
 }
 function measure() {
   const h = stage.clientHeight;
-  readY = h * 0.3;
+  readY = h * 0.5;
   script.style.paddingTop = Math.max(0, readY - head.offsetHeight) + 'px';
   script.style.paddingBottom = h + 'px';
-  anchors = SECTIONS.map((s, i) => ({ t: s.start, y: topOf(heads[i]) - readY }));
-  const lastLine = lines[lines.length - 1].el;
-  anchors.push({ t: TOTAL, y: topOf(lastLine) + lastLine.offsetHeight - readY });
-  lines.forEach(l => { l.top = topOf(l.el); });
+  const rowH = currentSize() * 1.42;
+  anchors = [];
+  let first = 0;
+  SECTIONS.forEach((sec, i) => {
+    const title = heads[i].firstChild;
+    anchors.push({ t: sec.start, y: topOf(title) + title.offsetHeight / 2 - readY });
+    lines.slice(first, first + sec.lines.length).forEach(l => {
+      anchors.push({ t: l.t, y: topOf(l.textEl) + rowH / 2 - readY });
+    });
+    first += sec.lines.length;
+  });
+  const lastText = lines[lines.length - 1].textEl;
+  anchors.push({ t: TOTAL, y: topOf(lastText) + lastText.offsetHeight - rowH / 2 - readY });
 }
 function yAt(time) {
   const c = Math.max(0, Math.min(TOTAL, time));
@@ -295,9 +320,8 @@ function paint() {
 }
 function status() {
   $('clock').textContent = t < 0 ? 'Starts in ' + Math.ceil(-t) : fmt(t);
-  const y = stage.scrollTop + readY + 4;
   let n = 0;
-  for (let i = 0; i < lines.length; i++) { if (lines[i].top <= y) n = i; else break; }
+  for (let i = 0; i < lines.length; i++) { if (lines[i].t <= t) n = i; else break; }
   if (n !== current) {
     if (current >= 0) lines[current].el.classList.remove('now');
     lines[n].el.classList.add('now');
@@ -330,8 +354,16 @@ function setPlaying(on) {
 function frame(now) {
   if (!playing) return;
   if (last) {
-    const dt = Math.min((now - last) / 1000, 0.1);
-    t += t < 0 ? dt : dt * speed;
+    const raw = (now - last) / 1000;
+    const dt = room ? raw : Math.min(raw, 0.1);
+    let rate = t < 0 ? 1 : speed;
+    if (ref) {
+      const target = expectedAt(now);
+      drift = target - t;
+      if (Math.abs(drift) > 1.5) t = target;
+      else rate += Math.max(-0.2, Math.min(0.2, drift * 0.8));
+    }
+    t += dt * rate;
     if (t >= TOTAL) { t = TOTAL; paint(); setPlaying(false); return; }
     paint();
   }
@@ -346,6 +378,7 @@ stage.addEventListener('scroll', () => {
   if (Math.abs(stage.scrollTop - expected) > 3) {
     t = tAt(stage.scrollTop);
     expected = stage.scrollTop;
+    ref = null;
     status();
     clearTimeout(scrollShare);
     scrollShare = setTimeout(share, 300);
@@ -419,7 +452,8 @@ if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { me
 const BROKERS = window.PROMPTER_BROKERS || ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
 const deviceId = Math.random().toString(36).slice(2, 10);
 const STALE_AFTER = 20;
-let room = null, clients = [], seenRev = 0, seenId = '', leader = false, tick = 0;
+const clocks = new Map();
+let room = null, clients = [], seenRev = 0, seenId = '', leader = false, tick = 0, ref = null, drift = 0;
 const peers = new Map();
 const topic = name => 'foul-fair-prompter/v1/' + room + '/' + name;
 
@@ -435,7 +469,31 @@ function snapshot() {
 function share() {
   if (!room) return;
   leader = true;
+  ref = null;
+  drift = 0;
   publish('state', snapshot(), true);
+}
+// Where the leading device is right now, worked out from its last report.
+function expectedAt(now) {
+  let at = ref.t, left = (now - ref.perf) / 1000;
+  if (at < 0) { const lead = Math.min(-at, left); at += lead; left -= lead; }
+  return Math.min(TOTAL, at + left * ref.speed);
+}
+// How far this device's clock is behind another's, from the fastest round trips.
+function offsetOf(id) {
+  const samples = clocks.get(id);
+  if (!samples || !samples.length) return null;
+  return samples.reduce((best, s) => (s.rtt < best.rtt ? s : best)).off;
+}
+function addClockSample(id, sent) {
+  const now = Date.now();
+  return at => {
+    const rtt = now - sent;
+    const samples = clocks.get(id) || [];
+    samples.push({ rtt, off: at - (sent + rtt / 2) });
+    if (samples.length > 8) samples.shift();
+    clocks.set(id, samples);
+  };
 }
 function receive(m, retained) {
   if (m.id === deviceId || !Number.isFinite(m.rev) || !Number.isFinite(m.t) || !Number.isFinite(m.speed)) return;
@@ -443,14 +501,23 @@ function receive(m, retained) {
   seenRev = m.rev;
   seenId = m.id;
   const heartbeat = m.hb === true;
-  if (!heartbeat) leader = false;
+  leader = false;
   setSpeed(clampSpeed(Math.round(m.speed)));
-  const age = Math.max(0, (Date.now() - m.at) / 1000);
+  const off = offsetOf(m.id);
+  const age = Math.max(0, off === null ? (retained ? (Date.now() - m.at) / 1000 : 0.1) : (Date.now() + off - m.at) / 1000);
   const abandoned = retained && age > STALE_AFTER;
   const on = m.playing === true && !abandoned;
-  let target = Math.max(-LEAD_IN, Math.min(TOTAL, m.t));
-  if (on) target += (retained ? age : 0.1) * (target < 0 ? 1 : speed);
-  if (!heartbeat || Math.abs(target - t) > 1) jump(target);
+  const reported = Math.max(-LEAD_IN, Math.min(TOTAL, m.t));
+  if (on) {
+    ref = { t: reported, speed, perf: performance.now() - age * 1000 };
+    const target = expectedAt(performance.now());
+    drift = target - t;
+    if (!heartbeat || Math.abs(drift) > 1.5) jump(target);
+  } else {
+    ref = null;
+    drift = 0;
+    if (Math.abs(reported - t) > 0.05) jump(reported);
+  }
   if (on !== playing) setPlaying(on);
 }
 function syncState(text, connected) {
@@ -465,7 +532,10 @@ function refreshStatus() {
   peers.forEach((seen, id) => { if (now - seen > 11000) peers.delete(id); });
   if (!up) syncState('Connecting to the sync service…', false);
   else if (peers.size === 0) syncState('Room ' + room + ' is open. Waiting for the other device.', false);
-  else syncState('Synced with ' + peers.size + (peers.size === 1 ? ' other device.' : ' other devices.'), true);
+  else {
+    const gap = ref ? ' Matched to within ' + Math.max(0.1, Math.abs(drift)).toFixed(1) + ' seconds.' : '';
+    syncState('Synced with ' + peers.size + (peers.size === 1 ? ' other device.' : ' other devices.') + gap, true);
+  }
 }
 function leaveRoom() {
   clearInterval(tick);
@@ -475,7 +545,10 @@ function leaveRoom() {
   leader = false;
   seenRev = 0;
   seenId = '';
+  ref = null;
+  drift = 0;
   peers.clear();
+  clocks.clear();
   $('leave').hidden = true;
   $('copyLink').hidden = true;
   store.set('room', '');
@@ -494,8 +567,8 @@ function joinRoom(code) {
   clients = BROKERS.map(url => {
     const c = mqtt.connect(url, { clientId: 'ffp-' + deviceId + Math.random().toString(36).slice(2, 6), reconnectPeriod: 3000, connectTimeout: 8000 });
     c.on('connect', () => {
-      c.subscribe([topic('state'), topic('hello')], { qos: 0 });
-      publish('hello', { id: deviceId }, false);
+      c.subscribe([topic('state'), topic('hello'), topic('pong')], { qos: 0 });
+      publish('hello', { id: deviceId, sent: Date.now() }, false);
       refreshStatus();
     });
     c.on('close', refreshStatus);
@@ -506,8 +579,14 @@ function joinRoom(code) {
       if (!m || typeof m !== 'object') return;
       if (name.endsWith('/hello')) {
         if (m.id && m.id !== deviceId) {
-          if (!peers.has(String(m.id))) publish('hello', { id: deviceId }, false);
+          publish('pong', { id: deviceId, to: m.id, sent: m.sent, at: Date.now() }, false);
           peers.set(String(m.id), Date.now());
+          refreshStatus();
+        }
+      } else if (name.endsWith('/pong')) {
+        if (m.to === deviceId && Number.isFinite(m.sent) && Number.isFinite(m.at)) {
+          peers.set(String(m.id), Date.now());
+          addClockSample(String(m.id), m.sent)(m.at);
           refreshStatus();
         }
       } else {
@@ -520,10 +599,10 @@ function joinRoom(code) {
   const joined = room;
   setTimeout(() => { if (room === joined && seenRev === 0) share(); }, 2000);
   tick = setInterval(() => {
-    publish('hello', { id: deviceId }, false);
-    if (leader && playing && !document.hidden) publish('state', { ...snapshot(), hb: true }, true);
+    publish('hello', { id: deviceId, sent: Date.now() }, false);
+    if (leader && (!playing || !document.hidden)) publish('state', { ...snapshot(), hb: true }, true);
     refreshStatus();
-  }, 4000);
+  }, 2000);
   refreshStatus();
 }
 
