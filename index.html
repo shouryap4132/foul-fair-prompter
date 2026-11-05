@@ -348,7 +348,7 @@ function letScreenGo() {
 function setPlaying(on) {
   playing = on;
   $('play').textContent = on ? 'Pause' : 'Play';
-  last = 0;
+  last = on ? performance.now() : 0;
   if (on) { holdScreen(); requestAnimationFrame(frame); } else { letScreenGo(); }
 }
 function step(now) {
