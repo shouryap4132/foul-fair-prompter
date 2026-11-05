@@ -360,9 +360,9 @@ function step(now) {
       const target = expectedAt(now);
       drift = target - t;
       if (Math.abs(drift) > 1.5) t = target;
-      else rate += Math.max(-0.2, Math.min(0.2, drift * 0.8));
+      else if (raw <= 0.5) rate += Math.max(-0.2, Math.min(0.2, drift * 0.8));
     }
-    t += dt * rate;
+    t = ref && raw > 0.5 ? expectedAt(now) : t + dt * rate;
     if (t >= TOTAL) { t = TOTAL; paint(); setPlaying(false); return; }
     paint();
   }
